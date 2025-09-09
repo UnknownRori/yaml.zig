@@ -119,6 +119,20 @@ pub const Parser = struct {
         switch (curr_tok) {
             .Indent => {
                 self.advance();
+                if (self.check(TokenType.EndLine)) {
+                    self.advance();
+                    const token = self.current() orelse return Error.UnexpectedToken;
+                    switch (token) {
+                        .Indent => |n| {
+                            const sequence = try self.parse_sequence(allocator, n);
+                            return Value{ .Sequence = .{
+                                .key = key_str,
+                                .value = sequence,
+                            } };
+                        },
+                        else => return Error.UnexpectedToken,
+                    }
+                }
                 const val = try self.get_multiple_value(allocator);
 
                 return Value{ .Scalar = .{
