@@ -119,6 +119,20 @@ pub const Parser = struct {
         switch (curr_tok) {
             .Indent => {
                 self.advance();
+                if (self.check(TokenType.EndLine)) {
+                    self.advance();
+                    const token = self.current() orelse return Error.UnexpectedToken;
+                    switch (token) {
+                        .Indent => |n| {
+                            const sequence = try self.parse_sequence(allocator, n);
+                            return Value{ .Sequence = .{
+                                .key = key_str,
+                                .value = sequence,
+                            } };
+                        },
+                        else => return Error.UnexpectedToken,
+                    }
+                }
                 const val = try self.get_multiple_value(allocator);
 
                 return Value{ .Scalar = .{
@@ -374,6 +388,52 @@ test "Parse combined value with raw 2" {
         .Sequence => |seq| {
             try testing.expectEqual(1, seq.value.items.len);
             try testing.expectEqualStrings("cssclasses", seq.key.items);
+        },
+        else => try testing.expect(false),
+    }
+}
+
+test "Parse with sequence space" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+    const data =
+        \\tags: 
+        \\  - fleeting
+        \\created: 2025-08-08T03:02:00
+        \\cssclasses: 
+        \\  - center-h1
+    ;
+
+    var parser = try Parser.init(allocator, data);
+    defer parser.deinit();
+
+    var arena = ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const value = try parser.parse(arena.allocator());
+    defer value.deinit();
+
+    try testing.expectEqual(3, value.items.len);
+    switch (value.items[0]) {
+        .Sequence => |seq| {
+            try testing.expectEqual(1, seq.value.items.len);
+            try testing.expectEqualStrings("tags", seq.key.items);
+            try testing.expectEqualStrings("fleeting", seq.value.items[0].items);
+        },
+        else => try testing.expect(false),
+    }
+
+    switch (value.items[1]) {
+        .Scalar => |scalar| {
+            try testing.expectEqualStrings("created", scalar.key.items);
+        },
+        else => try testing.expect(false),
+    }
+
+    switch (value.items[2]) {
+        .Sequence => |seq| {
+            try testing.expectEqual(1, seq.value.items.len);
+            try testing.expectEqualStrings("cssclasses", seq.key.items);
+            try testing.expectEqualStrings("center-h1", seq.value.items[0].items);
         },
         else => try testing.expect(false),
     }
