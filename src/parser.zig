@@ -15,19 +15,21 @@ pub const Error = error{
 pub const Parser = struct {
     tokens: std.ArrayList(Token),
     pos: usize,
+    allocator: std.mem.Allocator,
 
     const Self = @This();
 
     pub fn init(allocator: Allocator, data: []const u8) !Self {
         var lexer = Lexer.init(data);
-        var tokens = std.ArrayList(Token).init(allocator);
+        var tokens = try std.ArrayList(Token).initCapacity(allocator, 10);
         while (lexer.next()) |token| {
-            try tokens.append(token);
+            try tokens.append(allocator, token);
         }
 
         return Self{
             .tokens = tokens,
             .pos = 0,
+            .allocator = allocator,
         };
     }
 
@@ -63,7 +65,7 @@ pub const Parser = struct {
     }
 
     fn get_multiple_value(self: *Self, allocator: Allocator) !std.ArrayList(u8) {
-        var str = std.ArrayList(u8).init(allocator);
+        var str = try std.ArrayList(u8).initCapacity(allocator, 10);
         while (!self.is_empty()) {
             const tok = self.current() orelse return Error.UnexpectedToken;
             if (tok.equals(TokenType.EndLine)) {
@@ -73,13 +75,13 @@ pub const Parser = struct {
 
             switch (tok) {
                 .Indent => |n| {
-                    try str.appendNTimes(' ', n);
+                    try str.appendNTimes(allocator, ' ', n);
                 },
                 .Colon => {
-                    try str.append(':');
+                    try str.append(allocator, ':');
                 },
                 .Value => |n| {
-                    try str.appendSlice(n);
+                    try str.appendSlice(allocator, n);
                 },
                 else => return Error.UnexpectedToken,
             }
@@ -89,13 +91,13 @@ pub const Parser = struct {
     }
 
     pub fn parse(self: *Self, allocator: Allocator) !std.ArrayList(Value) {
-        var values = std.ArrayList(Value).init(allocator);
+        var values = try std.ArrayList(Value).initCapacity(allocator, 10);
         var indent: u32 = 0;
         while (!self.is_empty()) {
             const tok = self.current() orelse return Error.UnexpectedToken;
             switch (tok) {
                 .Indent => |n| indent = n,
-                .Value => try values.append(try self.parse_value(allocator, indent)),
+                .Value => try values.append(allocator, try self.parse_value(allocator, indent)),
                 .EndLine => self.advance(),
                 else => return Error.UnexpectedToken,
             }
@@ -109,8 +111,7 @@ pub const Parser = struct {
         const key = tok.getValue() orelse return Error.UnexpectedToken;
 
         var key_str = try std.ArrayList(u8).initCapacity(allocator, key.len);
-        try key_str.appendSlice(key);
-        errdefer key_str.deinit();
+        try key_str.appendSlice(allocator, key);
 
         self.advance();
         try self.consume(TokenType.Colon);
@@ -161,8 +162,7 @@ pub const Parser = struct {
     }
 
     fn parse_sequence(self: *Self, allocator: Allocator, indent: u32) !std.ArrayList(std.ArrayList(u8)) {
-        var sequence = std.ArrayList(std.ArrayList(u8)).init(allocator);
-        errdefer sequence.deinit();
+        var sequence = try std.ArrayList(std.ArrayList(u8)).initCapacity(allocator, 10);
 
         while (!self.is_empty()) {
             if (!self.check(Token{ .Indent = indent })) break;
@@ -174,7 +174,7 @@ pub const Parser = struct {
             switch (tok) {
                 .Value => {
                     const val = try self.get_multiple_value(allocator);
-                    try sequence.append(val);
+                    try sequence.append(allocator, val);
                 },
                 else => return Error.UnexpectedToken,
             }
@@ -188,8 +188,8 @@ pub const Parser = struct {
         return Error.UnexpectedToken;
     }
 
-    pub fn deinit(self: Self) void {
-        self.tokens.deinit();
+    pub fn deinit(self: *Self) void {
+        self.tokens.deinit(self.allocator);
     }
 };
 
@@ -203,8 +203,8 @@ test "Parse simple scalar value" {
 
     var arena = ArenaAllocator.init(allocator);
     defer arena.deinit();
-    const value = try parser.parse(arena.allocator());
-    defer value.deinit();
+    var value = try parser.parse(arena.allocator());
+    defer value.deinit(arena.allocator());
 
     try testing.expectEqual(1, value.items.len);
     try testing.expectEqualStrings("Agustina", value.items[0].Scalar.value.items);
@@ -221,8 +221,8 @@ test "Parse simple sequence value" {
 
     var arena = ArenaAllocator.init(allocator);
     defer arena.deinit();
-    const value = try parser.parse(arena.allocator());
-    defer value.deinit();
+    var value = try parser.parse(arena.allocator());
+    defer value.deinit(arena.allocator());
 
     try testing.expectEqual(1, value.items.len);
     try testing.expectEqualStrings("names", value.items[0].Sequence.key.items);
@@ -241,8 +241,8 @@ test "Parse combined value" {
 
     var arena = ArenaAllocator.init(allocator);
     defer arena.deinit();
-    const value = try parser.parse(arena.allocator());
-    defer value.deinit();
+    var value = try parser.parse(arena.allocator());
+    defer value.deinit(arena.allocator());
 
     try testing.expectEqual(2, value.items.len);
     switch (value.items[0]) {
@@ -274,8 +274,8 @@ test "Parse combined value with windows endline" {
 
     var arena = ArenaAllocator.init(allocator);
     defer arena.deinit();
-    const value = try parser.parse(arena.allocator());
-    defer value.deinit();
+    var value = try parser.parse(arena.allocator());
+    defer value.deinit(arena.allocator());
 
     try testing.expectEqual(2, value.items.len);
     switch (value.items[0]) {
@@ -318,8 +318,8 @@ test "Parse combined value with raw" {
 
     var arena = ArenaAllocator.init(allocator);
     defer arena.deinit();
-    const value = try parser.parse(arena.allocator());
-    defer value.deinit();
+    var value = try parser.parse(arena.allocator());
+    defer value.deinit(arena.allocator());
 
     try testing.expectEqual(3, value.items.len);
     switch (value.items[0]) {
@@ -364,8 +364,8 @@ test "Parse combined value with raw 2" {
 
     var arena = ArenaAllocator.init(allocator);
     defer arena.deinit();
-    const value = try parser.parse(arena.allocator());
-    defer value.deinit();
+    var value = try parser.parse(arena.allocator());
+    defer value.deinit(arena.allocator());
 
     try testing.expectEqual(3, value.items.len);
     switch (value.items[0]) {
@@ -409,8 +409,8 @@ test "Parse with sequence space" {
 
     var arena = ArenaAllocator.init(allocator);
     defer arena.deinit();
-    const value = try parser.parse(arena.allocator());
-    defer value.deinit();
+    var value = try parser.parse(arena.allocator());
+    defer value.deinit(arena.allocator());
 
     try testing.expectEqual(3, value.items.len);
     switch (value.items[0]) {

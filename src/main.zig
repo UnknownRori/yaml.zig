@@ -21,8 +21,8 @@ pub fn main() !void {
 
     var arena = ArenaAllocator.init(allocator);
     defer arena.deinit();
-    const value = try parser.parse(arena.allocator());
-    defer value.deinit();
+    var value = try parser.parse(arena.allocator());
+    defer value.deinit(arena.allocator());
 
     try testing.expectEqual(3, value.items.len);
     switch (value.items[0]) {
